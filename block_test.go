@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-kit/kit/log"
@@ -147,7 +148,12 @@ func TestCorruptedChunk(t *testing.T) {
 			testutil.Ok(t, f.Close())
 
 			_, err = OpenBlock(nil, blockDir, nil)
-			testutil.Equals(t, test.expErr.Error(), err.Error())
+			testutil.NotOk(t, err)
+			// Structural chunk damage must be classified as permanent
+			// corruption while the underlying error text is preserved.
+			testutil.Assert(t, IsCorruptionErr(err), "expected corruption for %q, got: %v", name, err)
+			testutil.Assert(t, strings.Contains(err.Error(), test.expErr.Error()),
+				"corruption error %q must retain the underlying message %q", err.Error(), test.expErr.Error())
 		})
 	}
 }

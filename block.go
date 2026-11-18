@@ -305,24 +305,29 @@ func OpenBlock(logger log.Logger, dir string, pool chunkenc.Pool) (pb *Block, er
 	}()
 	meta, sizeMeta, err := readMetaFile(dir)
 	if err != nil {
-		return nil, err
+		// A missing meta.json while a block directory is being swapped in is
+		// transient; an unparseable or invalid meta file is permanent damage.
+		if os.IsNotExist(err) {
+			return nil, &ErrBlockTemporary{BlockDir: dir, err: err}
+		}
+		return nil, wrapCorrupted(dir, CorruptMeta, err)
 	}
 
 	cr, err := chunks.NewDirReader(chunkDir(dir), pool)
 	if err != nil {
-		return nil, err
+		return nil, classifyBlockErr(dir, CorruptChunks, err)
 	}
 	closers = append(closers, cr)
 
 	ir, err := index.NewFileReader(filepath.Join(dir, indexFilename))
 	if err != nil {
-		return nil, err
+		return nil, classifyBlockErr(dir, CorruptIndex, err)
 	}
 	closers = append(closers, ir)
 
 	tr, sizeTomb, err := readTombstones(dir)
 	if err != nil {
-		return nil, err
+		return nil, classifyBlockErr(dir, CorruptTombstones, err)
 	}
 	closers = append(closers, tr)
 

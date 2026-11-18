@@ -743,7 +743,11 @@ func (db *DB) reload() (err error) {
 				block.Close()
 			}
 		}
-		return fmt.Errorf("unexpected corrupted block:%v", corrupted)
+		return &ErrBlockCorrupted{
+			BlockDir: db.dir,
+			Type:     CorruptMeta,
+			err:      fmt.Errorf("unexpected corrupted block: %v", corrupted),
+		}
 	}
 
 	// All deletable blocks should not be loaded.
@@ -817,7 +821,20 @@ func openBlocks(l log.Logger, dir string, loaded []*Block, chunkPool chunkenc.Po
 	for _, bDir := range bDirs {
 		meta, _, err := readMetaFile(bDir)
 		if err != nil {
-			level.Error(l).Log("msg", "not a block dir", "dir", bDir)
+			// A directory that briefly lacks a meta.json (e.g. it is in the
+			// middle of an atomic swap) is transient and must not poison the
+			// reload. An unparseable meta.json, however, means corruption.
+			if os.IsNotExist(err) {
+				level.Warn(l).Log("msg", "block dir not yet complete, skipping", "dir", bDir, "err", err)
+				continue
+			}
+			id, parseErr := ulid.ParseStrict(filepath.Base(bDir))
+			if parseErr != nil {
+				level.Error(l).Log("msg", "not a block dir", "dir", bDir)
+				continue
+			}
+			corrupted[id] = wrapCorrupted(bDir, CorruptMeta, err)
+			level.Error(l).Log("msg", "corrupted block meta", "dir", bDir, "err", err)
 			continue
 		}
 
@@ -826,7 +843,15 @@ func openBlocks(l log.Logger, dir string, loaded []*Block, chunkPool chunkenc.Po
 		if !open {
 			block, err = OpenBlock(l, bDir, chunkPool)
 			if err != nil {
+				if IsTemporaryErr(err) {
+					// The block is being swapped in or a file is briefly
+					// unavailable. Keep serving the previously loaded blocks;
+					// the next reload will pick it up.
+					level.Warn(l).Log("msg", "temporary error opening block, keeping old blocks", "dir", bDir, "err", err)
+					continue
+				}
 				corrupted[meta.ULID] = err
+				level.Error(l).Log("msg", "corrupted block", "dir", bDir, "err", err)
 				continue
 			}
 		}
@@ -1262,7 +1287,17 @@ func isBlockDir(fi os.FileInfo) bool {
 	if !fi.IsDir() {
 		return false
 	}
-	_, err := ulid.ParseStrict(fi.Name())
+	// A block is made visible by atomically renaming "<ulid>.tmp" to
+	// "<ulid>" once all of its files have been written and fsynced. Any
+	// directory that is still being written therefore carries a ".tmp"
+	// suffix or a name that is not a valid ULID and must never be exposed
+	// to queries: readers keep seeing the old blocks until the rename has
+	// completed, at which point blockDirs picks up the new block.
+	name := fi.Name()
+	if strings.HasSuffix(name, ".tmp") || strings.HasSuffix(name, ".temp") {
+		return false
+	}
+	_, err := ulid.ParseStrict(name)
 	return err == nil
 }
 

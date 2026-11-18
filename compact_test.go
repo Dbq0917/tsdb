@@ -29,6 +29,7 @@ import (
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/fileutil"
+	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -1037,7 +1038,11 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 			actBlocks, err := blockDirs(db.Dir())
 			testutil.Ok(t, err)
 			testutil.Equals(t, expBlocks, len(actBlocks)-1) // -1 to exclude the corrupted block.
-			testutil.Ok(t, os.RemoveAll(lastBlockIndex))    // Corrupt the block by removing the index file.
+			// Corrupt the block by truncating its index to a structurally
+			// invalid length. A missing file is treated as a transient
+			// (retryable) condition, whereas truncated bytes are permanent
+			// corruption that must fail the reload.
+			testutil.Ok(t, os.Truncate(lastBlockIndex, int64(index.HeaderLen)))
 
 			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.metrics.reloadsFailed), "initial 'failed db reload' count metrics mismatch")
 			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran), "initial `compactions` count metric mismatch")

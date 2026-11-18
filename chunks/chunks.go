@@ -75,7 +75,12 @@ func (cm *Meta) OverlapsClosedInterval(mint, maxt int64) bool {
 }
 
 var (
-	errInvalidSize = fmt.Errorf("invalid size")
+	// ErrInvalidSize is returned when a chunk segment is too short to hold a
+	// valid header, which indicates the on-disk chunk data is truncated or
+	// otherwise corrupted.
+	ErrInvalidSize = fmt.Errorf("invalid size")
+
+	errInvalidSize = ErrInvalidSize
 )
 
 var castagnoliTable *crc32.Table

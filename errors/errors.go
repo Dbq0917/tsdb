@@ -53,6 +53,24 @@ func (es *MultiError) Add(err error) {
 	}
 }
 
+// Unwrap exposes the contained errors to the standard library's errors.Is and
+// errors.As so that typed errors nested in a MultiError (e.g. block corruption
+// markers) remain discoverable through the wrapping chain.
+func (es MultiError) Unwrap() []error {
+	return []error(es)
+}
+
+// Cause makes the contained errors reachable through github.com/pkg/errors'
+// root-cause walk, which otherwise stops at a type that does not implement
+// Cause(). A single-element MultiError unwraps directly to that element;
+// otherwise the MultiError itself is returned.
+func (es MultiError) Cause() error {
+	if len(es) == 1 {
+		return es[0]
+	}
+	return es
+}
+
 // Err returns the error list as an error or nil if it is empty.
 func (es MultiError) Err() error {
 	if len(es) == 0 {
